@@ -34,7 +34,7 @@ program cns_example
   ! probe_param = 'probe_param.dat'
   ! call parse_parameters(trim(probe_param),param)
 
-  param%dt = 0.0009
+  param%dt = 0.001
   param%CFL = 1000d0
  
   
@@ -278,8 +278,7 @@ subroutine CNS_absorbing_BC(bc, field, param, t, pos, nil0, nil1, nil2)
 	
 	U_total = gU_total/gV_total
 	
-	! f = (Uave-U_total)/param%dt
-	f = 0d0
+	f = (Uave-U_total)/param%dt
 	
 	do icube = 1, field%bcm%n_cube
 		
@@ -310,6 +309,7 @@ end subroutine CNS_absorbing_BC
 subroutine own_user_flow_field_init(field, param)
 
   use flow_field
+  use field_intf			
   use parameters
   
   implicit none
@@ -337,15 +337,15 @@ subroutine own_user_flow_field_init(field, param)
   real(8), allocatable :: w_x(:,:,:)
   
   
+  nx = 2;		 
   ny = 2;
   nz = 2;
-  nx = 2;
   
   intensity = 20;
   
-  M = field%bcm%m_cellx
-  My = field%bcm%m_celly
-  Mz = field%bcm%m_cellz
+  M = field%bcm%n_cellx
+  My = field%bcm%n_celly
+  Mz = field%bcm%n_cellz
   
   nyy = 2 * ny
   nzz = 2 * nz
@@ -377,11 +377,11 @@ subroutine own_user_flow_field_init(field, param)
   call random_number(U2_z)
   
   U1_x = max(U1_x, 1.0d-10)
-  U2_x = max(U1_x, 1.0d-10)
+  U2_x = max(U2_x, 1.0d-10)
   U1_y = max(U1_y, 1.0d-10)
-  U2_y = max(U1_y, 1.0d-10)
+  U2_y = max(U2_y, 1.0d-10)
   U1_z = max(U1_z, 1.0d-10)
-  U2_z = max(U1_z, 1.0d-10)
+  U2_z = max(U2_z, 1.0d-10)
 
   
   randomx = intensity * sqrt(-2.0d0 * log(U1_x)) * cos(2.0d0 * pii * U2_x)
@@ -392,6 +392,48 @@ subroutine own_user_flow_field_init(field, param)
   
   
   !$omp single
+  
+   do i = 1, field%bcm%n_cube
+      do l = n_band + 1, n_band + field%bcm%n_cellz
+        do k = n_band + 1, n_band + field%bcm%n_celly
+           do j = n_band + 1, n_band + field%bcm%n_cellx
+
+				field%scratch(2)%q(1, j, k, l, i) = randomx(j, k, l, i)
+			    field%scratch(2)%q(2, j, k, l, i) = randomy(j, k, l, i)
+			    field%scratch(2)%q(3, j, k, l, i) = randomz(j, k, l, i)
+				  
+            end do
+         end do
+      end do
+   end do
+   
+   
+  call field_intf_q(field,1,3,field%scratch(2)%qp)
+  call field_intf_finalize(field,1,3,field%scratch(2)%qp)
+  
+   if(param%intf_diagonal) then
+
+       call field_intf_q_edge(field,1,3,field%scratch(2)%qp)
+       call field_intf_finalize_edge(field,1,3,field%scratch(2)%qp)
+       call field_intf_q_corner(field,1,3,field%scratch(2)%qp)
+       call field_intf_finalize_corner(field,1,3,field%scratch(2)%qp)
+
+    end if
+
+   do i = 1, field%bcm%n_cube
+      do l = 1, field%bcm%m_cellz
+         do k = 1, field%bcm%m_celly
+            do j = 1, field%bcm%m_cellx
+            
+				randomx(j, k, l, i) = field%scratch(2)%q(1, j, k, l, i)
+			    randomy(j, k, l, i) = field%scratch(2)%q(2, j, k, l, i)
+			    randomz(j, k, l, i) = field%scratch(2)%q(3, j, k, l, i)
+				  
+            end do
+         end do
+      end do
+   end do
+   
   
   do icube = 1, field%bcm%n_cube
 	  
@@ -441,24 +483,24 @@ subroutine own_user_flow_field_init(field, param)
     
 		do step = 1, M
 		
-		  do j = 1, My
-			do k = 1, Mz
+		  do k = 1, My
+			do l = 1, Mz
 			
-				 u_x(j, k, icube) = sum(filter_kernel(:, :, :, icube) * randomx(step:step+2*nxx, j:j+2*nyy, k:k+2*nzz, icube))
-				 v_x(j, k, icube) = sum(filter_kernel(:, :, :, icube) * randomy(step:step+2*nxx, j:j+2*nyy, k:k+2*nzz, icube))
-				 w_x(j, k, icube) = sum(filter_kernel(:, :, :, icube) * randomz(step:step+2*nxx, j:j+2*nyy, k:k+2*nzz, icube))
-      
+				 u_x(k, l, icube) = sum(filter_kernel(:, :, :, icube) * randomx(step:step+2*nxx, k:k+2*nyy, l:l+2*nzz, icube))
+				 v_x(k, l, icube) = sum(filter_kernel(:, :, :, icube) * randomy(step:step+2*nxx, k:k+2*nyy, l:l+2*nzz, icube))
+				 w_x(k, l, icube) = sum(filter_kernel(:, :, :, icube) * randomz(step:step+2*nxx, k:k+2*nyy, l:l+2*nzz, icube))
+				 
 			end do
 		  end do
 
 
 		  do k = n_band + 1, n_band + field%bcm%n_celly
-           do j = n_band + 1, n_band + field%bcm%n_cellx
+           do l = n_band + 1, n_band + field%bcm%n_cellz
 		   
-			  field%qcnt(2, j, k, step, icube) = u_x(j-n_band, k-n_band, icube)
-			  field%qcnt(3, j, k, step, icube) = v_x(j-n_band, k-n_band, icube)
-			  field%qcnt(4, j, k, step, icube) = w_x(j-n_band, k-n_band, icube)
-
+			  field%qcnt(2, step+n_band, k, l, icube) = u_x(k-n_band, l-n_band, icube)
+			  field%qcnt(3, step+n_band, k, l, icube) = v_x(k-n_band, l-n_band, icube)
+			  field%qcnt(4, step+n_band, k, l, icube) = w_x(k-n_band, l-n_band, icube)
+			  
 			end do
 		  end do
 		  
@@ -505,7 +547,7 @@ subroutine own_user_flow_field_init(field, param)
                   endif
                   
                   
-                  u = field%qcnt(2, j, k, l, i)/param%rho0
+                  u = field%qcnt(2, j, k, l, i)/param%rho0+Upro
 				  v = field%qcnt(3, j, k, l, i)/param%rho0
                   w = field%qcnt(4, j, k, l, i)/param%rho0
             
