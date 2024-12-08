@@ -322,6 +322,7 @@ subroutine own_user_flow_field_init(field, param)
   real(kind=dp) :: Re_tau, heigh, U_tau, tau_w, y_plus, Upro, yy, intensity, pii, temp
   
   integer M, N, My, Mz, nx, ny, nz, nxx, nyy, nzz, step
+  integer :: offset_j, offset_k, offset_l									 
   
   real(8), allocatable :: U1_x(:,:,:,:)
   real(8), allocatable :: U2_x(:,:,:,:)
@@ -391,23 +392,28 @@ subroutine own_user_flow_field_init(field, param)
   deallocate(U1_x, U2_x, U1_y, U2_y, U1_z, U2_z)
   
   
-  !$omp single
+  !$omp do
   
    do i = 1, field%bcm%n_cube
       do l = n_band + 1, n_band + field%bcm%n_cellz
         do k = n_band + 1, n_band + field%bcm%n_celly
            do j = n_band + 1, n_band + field%bcm%n_cellx
 
-				field%scratch(2)%q(1, j, k, l, i) = randomx(j, k, l, i)
-			    field%scratch(2)%q(2, j, k, l, i) = randomy(j, k, l, i)
-			    field%scratch(2)%q(3, j, k, l, i) = randomz(j, k, l, i)
-				  
+			    jj = j-n_band+nx
+				kk = k-n_band+ny
+				ll = l-n_band+nz
+		   
+				field%scratch(2)%q(1, j, k, l, i) = randomx(jj, kk, ll, i)
+			    field%scratch(2)%q(2, j, k, l, i) = randomy(jj, kk, ll, i)
+			    field%scratch(2)%q(3, j, k, l, i) = randomz(jj, kk, ll, i)
             end do
          end do
       end do
    end do
+	!$omp end do
    
    
+  !$omp single
   call field_intf_q(field,1,3,field%scratch(2)%qp)
   call field_intf_finalize(field,1,3,field%scratch(2)%qp)
   
@@ -420,21 +426,40 @@ subroutine own_user_flow_field_init(field, param)
 
     end if
 
+	!$omp end single			 
+
+
+   offset_j = (2*nxx+M  - field%bcm%m_cellx) / 2
+   offset_k = (2*nyy+My - field%bcm%m_celly) / 2
+   offset_l = (2*nzz+Mz - field%bcm%m_cellz) / 2
+   
+  !$omp do
    do i = 1, field%bcm%n_cube
-      do l = 1, field%bcm%m_cellz
-         do k = 1, field%bcm%m_celly
-            do j = 1, field%bcm%m_cellx
-            
-				randomx(j, k, l, i) = field%scratch(2)%q(1, j, k, l, i)
-			    randomy(j, k, l, i) = field%scratch(2)%q(2, j, k, l, i)
-			    randomz(j, k, l, i) = field%scratch(2)%q(3, j, k, l, i)
-				  
+      do l = 1, 2*nzz+Mz
+         do k = 1, 2*nyy+My
+            do j = 1, 2*nxx+M
+   
+               ! 對應索引
+               if (j > offset_j .and. j <= field%bcm%m_cellx + offset_j .and. &
+                   k > offset_k .and. k <= field%bcm%m_celly + offset_k .and. &
+                   l > offset_l .and. l <= field%bcm%m_cellz + offset_l) then
+   
+                  randomx(j, k, l, i) = field%scratch(2)%q(1, j - offset_j, k - offset_k, l - offset_l, i)
+                  randomy(j, k, l, i) = field%scratch(2)%q(2, j - offset_j, k - offset_k, l - offset_l, i)
+                  randomz(j, k, l, i) = field%scratch(2)%q(3, j - offset_j, k - offset_k, l - offset_l, i)
+               else
+                  randomx(j, k, l, i) = 0.0d0
+                  randomy(j, k, l, i) = 0.0d0
+                  randomz(j, k, l, i) = 0.0d0
+               endif
             end do
          end do
       end do
    end do
+	!$omp end do
    
   
+  !$omp do	  
   do icube = 1, field%bcm%n_cube
 	  
      do i = -nxx, nxx
@@ -475,10 +500,11 @@ subroutine own_user_flow_field_init(field, param)
 	   end do
 	   
    end do
+   !$omp end do
    
    
    
-   
+	!$omp do	  
    do icube = 1, field%bcm%n_cube
     
 		do step = 1, M
@@ -510,7 +536,7 @@ subroutine own_user_flow_field_init(field, param)
 		
    end do
    
-   !$omp end single
+   !$omp end do
 
   
   
