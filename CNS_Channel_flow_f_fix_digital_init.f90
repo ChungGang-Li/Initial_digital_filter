@@ -34,7 +34,7 @@ program cns_example
   ! probe_param = 'probe_param.dat'
   ! call parse_parameters(trim(probe_param),param)
 
-  param%dt = 0.001
+  param%dt = 0.005
   param%CFL = 1000d0
  
   
@@ -47,7 +47,7 @@ program cns_example
   ! param%gravity_c = 0.5993
    param%solver_wall_func = 4
    ! param%solver_turb = 9
-   ! param%ADA_freq = 10
+   ! param%ADA_freq = 5
   
   
   param%output_average = .true.
@@ -55,7 +55,7 @@ program cns_example
   param%T_average = 1000   
 
   param%monitor_freq = 10
-  param%sample_freq = 1
+  param%sample_freq = 10
   param%clcd_freq = 10
 
   param%rho0 = 1.1842d0
@@ -117,7 +117,7 @@ program cns_example
   
 
   ! Load mesh, and allocate a 4 volume wide halo region
-  fname = '32cell.bin'
+  fname = '32cell2.bin'
   call mesh_init(mesh, param, fname, 4)
 
   ! Create an compressible flow field for the given mesh
@@ -186,7 +186,7 @@ program cns_example
                             
   call cns_init(cns, field, geom, bc, eval, param, lag(:))
 
-  call cns_set_flux(cns, ROE_LM)
+  call cns_set_flux(cns, ROE_LM_MOF)
   call cns_set_viscous(cns, CE2ND)
   call cns_set_tstep(cns, LUSGS_SLTS_MIX)
   
@@ -309,20 +309,28 @@ end subroutine CNS_absorbing_BC
 subroutine own_user_flow_field_init(field, param)
 
   use flow_field
-  use field_intf			
+  use field_intf
   use parameters
+  use data_module
+  
   
   implicit none
 
   type(flowfield_t), intent(inout) ::field
   type(param_t), intent(in) :: param
-  integer i, j, k, l, ii, jj, kk, ll, icube
+  integer i, j, k, l, ii, jj, kk, ll, icube, ierr
   
-  real(kind=dp) :: u,v,w,dx,dy,dz
+  real(kind=dp) :: u,v,w,dx,dy,dz,dxx,dyy,dzz, ycube
   real(kind=dp) :: Re_tau, heigh, U_tau, tau_w, y_plus, Upro, yy, intensity, pii, temp
+  real(kind=dp) :: xmin, xmax, ymin, ymax, zmin, zmax
+  real(kind=dp) :: abs1, abs2 , abs3, abs4, abs5, abs6
+  real(kind=dp) :: R11,R21,R22,R31,R32,R33
+  real(kind=dp) :: a11,a21,a22,a31,a32,a33
+    
   
   integer M, N, My, Mz, nx, ny, nz, nxx, nyy, nzz, step
-  integer :: offset_j, offset_k, offset_l									 
+  integer :: offset_j, offset_k, offset_l
+  integer :: nnrows, nncols
   
   real(8), allocatable :: U1_x(:,:,:,:)
   real(8), allocatable :: U2_x(:,:,:,:)
@@ -336,11 +344,19 @@ subroutine own_user_flow_field_init(field, param)
   real(8), allocatable :: u_x(:,:,:)
   real(8), allocatable :: v_x(:,:,:)
   real(8), allocatable :: w_x(:,:,:)
+  real(8), allocatable :: TII(:,:)
+  real(8), allocatable :: TII_int(:,:,:)
   
   
-  nx = 2;		 
-  ny = 2;
-  nz = 2;
+  Re_tau = 180d0
+  heigh = 0.05
+  U_tau = Re_tau*param%mu/param%rho0/(0.5*heigh)
+  tau_w = U_tau*U_tau*param%rho0
+
+
+  nx = 2 ! length scale
+  ny = 2 ! length scale
+  nz = 2 ! length scale
   
   intensity = 20;
   
@@ -354,6 +370,8 @@ subroutine own_user_flow_field_init(field, param)
   
   pii = 3.14159
   
+  nncols = 8
+   
   allocate(U1_x(2*nxx+M, 2*nyy+My, 2*nzz+Mz, field%bcm%n_cube))
   allocate(U2_x(2*nxx+M, 2*nyy+My, 2*nzz+Mz, field%bcm%n_cube))
   allocate(U1_y(2*nxx+M, 2*nyy+My, 2*nzz+Mz, field%bcm%n_cube))
@@ -368,7 +386,6 @@ subroutine own_user_flow_field_init(field, param)
   allocate(filter_kernel(-nxx:nxx, -nyy:nyy, -nzz:nzz, field%bcm%n_cube))
   
   allocate(u_x(My, Mz, field%bcm%n_cube), v_x(My, Mz, field%bcm%n_cube), w_x(My, Mz, field%bcm%n_cube))
-  
   
   call random_number(U1_x)
   call random_number(U2_x)
@@ -385,20 +402,22 @@ subroutine own_user_flow_field_init(field, param)
   U2_z = max(U2_z, 1.0d-10)
 
   
-  randomx = intensity * sqrt(-2.0d0 * log(U1_x)) * cos(2.0d0 * pii * U2_x)
-  randomy = intensity * sqrt(-2.0d0 * log(U1_y)) * cos(2.0d0 * pii * U2_y)
-  randomz = intensity * sqrt(-2.0d0 * log(U1_z)) * cos(2.0d0 * pii * U2_z)
+  randomx = sqrt(-2.0d0 * log(U1_x)) * cos(2.0d0 * pii * U2_x)
+  randomy = sqrt(-2.0d0 * log(U1_y)) * cos(2.0d0 * pii * U2_y)
+  randomz = sqrt(-2.0d0 * log(U1_z)) * cos(2.0d0 * pii * U2_z)
   
+  randomx = randomx / max(abs(maxval(randomx)), abs(minval(randomx)))
+  randomy = randomy / max(abs(maxval(randomy)), abs(minval(randomy)))
+  randomz = randomz / max(abs(maxval(randomz)), abs(minval(randomz)))
+
   deallocate(U1_x, U2_x, U1_y, U2_y, U1_z, U2_z)
   
-  
   !$omp do
-  
    do i = 1, field%bcm%n_cube
       do l = n_band + 1, n_band + field%bcm%n_cellz
         do k = n_band + 1, n_band + field%bcm%n_celly
            do j = n_band + 1, n_band + field%bcm%n_cellx
-
+		   
 			    jj = j-n_band+nx
 				kk = k-n_band+ny
 				ll = l-n_band+nz
@@ -406,14 +425,17 @@ subroutine own_user_flow_field_init(field, param)
 				field%scratch(2)%q(1, j, k, l, i) = randomx(jj, kk, ll, i)
 			    field%scratch(2)%q(2, j, k, l, i) = randomy(jj, kk, ll, i)
 			    field%scratch(2)%q(3, j, k, l, i) = randomz(jj, kk, ll, i)
+				
             end do
          end do
       end do
    end do
-	!$omp end do
+   !$omp end do
    
    
   !$omp single
+  
+   
   call field_intf_q(field,1,3,field%scratch(2)%qp)
   call field_intf_finalize(field,1,3,field%scratch(2)%qp)
   
@@ -425,8 +447,8 @@ subroutine own_user_flow_field_init(field, param)
        call field_intf_finalize_corner(field,1,3,field%scratch(2)%qp)
 
     end if
-
-	!$omp end single			 
+	
+	!$omp end single
 
 
    offset_j = (2*nxx+M  - field%bcm%m_cellx) / 2
@@ -452,14 +474,15 @@ subroutine own_user_flow_field_init(field, param)
                   randomy(j, k, l, i) = 0.0d0
                   randomz(j, k, l, i) = 0.0d0
                endif
+   
             end do
          end do
       end do
    end do
-	!$omp end do
+   !$omp end do
    
   
-  !$omp do	  
+  !$omp do
   do icube = 1, field%bcm%n_cube
 	  
      do i = -nxx, nxx
@@ -503,8 +526,50 @@ subroutine own_user_flow_field_init(field, param)
    !$omp end do
    
    
+   Call Turbulent_Intensit_reading_init("Statistics_Ref.dat", nnrows)
    
-	!$omp do	  
+   Call Turbulent_Intensit_reading("Statistics_Ref.dat", TII, nnrows, nncols)
+   
+   dyy = 1d0/nnrows
+	
+   allocate(TII_int(6,field%bcm%n_celly,field%bcm%n_cube)) ! R11:3 R12:4 R22:5 R31:6 R32:7 R33:8
+  
+   call MPI_allreduce(field%bcm%local_ymin, abs3, 1, MPI_double_precision, MPI_MIN, MPI_COMM_WORLD, ierr)
+   call MPI_allreduce(field%bcm%local_ymax, abs4, 1, MPI_double_precision, MPI_MAX, MPI_COMM_WORLD, ierr)
+   
+   temp = abs(abs4-abs3)
+   
+   TII(1,:) = 0.0d0
+   TII(nnrows,:) = 0.0d0
+   
+   !$omp do
+   do icube = 1, field%bcm%n_cube
+   
+	  ycube = field%bcm%ycube(icube)
+	  dy = field%bcm%dycube(icube)
+	  
+	  do k = 1, My
+	  
+	     YY = (ycube + (k-0.5)*dy - abs3)/temp
+		 
+		 ii = min(floor(YY / dyy),nnrows)
+		 
+		 ! TII_int(1:6,k,icube) = 0.5*(TII(ii,3:8) + TII(ii+1,3:8))*U_tau*U_tau
+		 
+		 TII_int(1:6,k,icube) = 0.5*(TII(ii,3:8) + TII(ii+1,3:8))
+		 
+		 ! write(*,*) YY,k,ii,TII(ii,3),TII(ii+1,3),TII_int(1,k,icube),0.5*(TII(ii,3) + TII(ii+1,3))
+		 
+	  enddo
+	  
+   end do
+   !$omp end do
+   
+  ! do i = 1, nnrows
+     ! write(*, '(8F10.5)') TII(i, :)  ! 假設每行最多 8 個數值
+  ! end do
+	
+  !$omp single
    do icube = 1, field%bcm%n_cube
     
 		do step = 1, M
@@ -512,20 +577,46 @@ subroutine own_user_flow_field_init(field, param)
 		  do k = 1, My
 			do l = 1, Mz
 			
-				 u_x(k, l, icube) = sum(filter_kernel(:, :, :, icube) * randomx(step:step+2*nxx, k:k+2*nyy, l:l+2*nzz, icube))
-				 v_x(k, l, icube) = sum(filter_kernel(:, :, :, icube) * randomy(step:step+2*nxx, k:k+2*nyy, l:l+2*nzz, icube))
-				 w_x(k, l, icube) = sum(filter_kernel(:, :, :, icube) * randomz(step:step+2*nxx, k:k+2*nyy, l:l+2*nzz, icube))
+				 temp = intensity*Re_tau*U_tau*U_tau
+			
+				 u_x(k, l, icube) = sum(filter_kernel(:, :, :, icube) * randomx(step:step+2*nxx, k:k+2*nyy, l:l+2*nzz, icube))*temp
+				 v_x(k, l, icube) = sum(filter_kernel(:, :, :, icube) * randomy(step:step+2*nxx, k:k+2*nyy, l:l+2*nzz, icube))*temp
+				 w_x(k, l, icube) = sum(filter_kernel(:, :, :, icube) * randomz(step:step+2*nxx, k:k+2*nyy, l:l+2*nzz, icube))*temp
 				 
 			end do
 		  end do
 
-
+		  ! R11:1 R21:2 R22:3 R31:4 R32:5 R33:6
+		  
 		  do k = n_band + 1, n_band + field%bcm%n_celly
            do l = n_band + 1, n_band + field%bcm%n_cellz
 		   
-			  field%qcnt(2, step+n_band, k, l, icube) = u_x(k-n_band, l-n_band, icube)
-			  field%qcnt(3, step+n_band, k, l, icube) = v_x(k-n_band, l-n_band, icube)
-			  field%qcnt(4, step+n_band, k, l, icube) = w_x(k-n_band, l-n_band, icube)
+			  ! field%qcnt(2, step+n_band, k, l, icube) = u_x(k-n_band, l-n_band, icube)
+			  ! field%qcnt(3, step+n_band, k, l, icube) = v_x(k-n_band, l-n_band, icube)
+			  ! field%qcnt(4, step+n_band, k, l, icube) = w_x(k-n_band, l-n_band, icube)
+			  
+			  R11 = TII_int(1,k-n_band,icube)
+			  R21 = TII_int(2,k-n_band,icube)
+			  R22 = TII_int(3,k-n_band,icube)
+			  R31 = TII_int(4,k-n_band,icube)
+			  R32 = TII_int(5,k-n_band,icube)
+			  R33 = TII_int(6,k-n_band,icube)
+			  
+			  a11 = sqrt(max(R11, 1.0d-10))
+              a21 = R21 / a11
+              a22 = sqrt(max(R22 - a21 * a21, 1.0d-10))
+              a31 = R31 / a11
+              a32 = (R32 - a21 * a31) / a22
+              a33 = sqrt(max(R33 - a31 * a31 - a32 * a32, 1.0d-10))
+
+			  field%qcnt(2, step+n_band, k, l, icube) = u_x(k-n_band, l-n_band, icube)*a11
+			  
+			  field%qcnt(3, step+n_band, k, l, icube) = v_x(k-n_band, l-n_band, icube)*a22 + &
+			                                            u_x(k-n_band, l-n_band, icube)*a21
+														
+			  field%qcnt(4, step+n_band, k, l, icube) = w_x(k-n_band, l-n_band, icube)*a33 + &
+														u_x(k-n_band, l-n_band, icube)*a31 + &
+														v_x(k-n_band, l-n_band, icube)*a32
 			  
 			end do
 		  end do
@@ -536,17 +627,10 @@ subroutine own_user_flow_field_init(field, param)
 		
    end do
    
-   !$omp end do
-
+   !$omp end single
+   
+   
   
-  
-  
-  
-  Re_tau = 180d0
-  heigh = 0.05
-  U_tau = Re_tau*param%mu/param%rho0/(0.5*heigh)
-  tau_w = U_tau*U_tau*param%rho0
-
   !$omp do
     do i = 1, field%bcm%n_cube
     
@@ -576,6 +660,13 @@ subroutine own_user_flow_field_init(field, param)
                   u = field%qcnt(2, j, k, l, i)/param%rho0+Upro
 				  v = field%qcnt(3, j, k, l, i)/param%rho0
                   w = field%qcnt(4, j, k, l, i)/param%rho0
+				  
+				  ! u = Upro
+				  
+                  ! call Inlet_gen(u)
+                  
+                  ! v = u-Upro
+                  ! w = u-Upro
             
                   field%qcnt(1, j, k, l, i) = param%rho0
                   field%qcnt(2, j, k, l, i) = param%rho0*u
@@ -583,12 +674,14 @@ subroutine own_user_flow_field_init(field, param)
                   field%qcnt(4, j, k, l, i) = param%rho0*w
                   field%qcnt(5, j, k, l, i) = param%P0 / (param%k - 1d0) + 0.5*param%rho0*(u*u+v*v+w*w)
 				  
+				  
             end do
          end do
       end do
    end do
   !$omp end do
   
+  deallocate(TII, TII_int)
   deallocate(randomx, randomy, randomz)
   deallocate(Bi, Bj, Bk)
   deallocate(filter_kernel)
@@ -596,6 +689,52 @@ subroutine own_user_flow_field_init(field, param)
   
   
 end subroutine own_user_flow_field_init
+
+
+subroutine Turbulent_Intensit_reading_init(filename, nrows)
+
+    implicit none
+    character(len=*), intent(in) :: filename
+    integer, intent(out) :: nrows
+
+    integer :: unit_id, ios
+    integer :: temp_nrows
+    character(len=256) :: line
+
+    ! 初始化行數計算變數
+    nrows = 0
+    temp_nrows = 0
+
+    ! 打開檔案
+    unit_id = 10
+    open(unit=unit_id, file=filename, status="old", action="read", iostat=ios)
+    if (ios /= 0) then
+        print *, "Error: Unable to open file!"
+        stop
+    endif
+
+    ! 跳過表頭
+    read(unit_id, "(A)", iostat=ios)
+    if (ios /= 0) then
+        print *, "Error: Unable to read the header!"
+        close(unit_id)
+        stop
+    endif
+
+    ! 計算行數
+    do
+        read(unit_id, "(A)", iostat=ios) line
+        if (ios /= 0) exit
+        temp_nrows = temp_nrows + 1
+    end do
+
+    ! 更新行數
+    nrows = temp_nrows
+
+    ! 關閉檔案
+    close(unit_id)
+
+end subroutine Turbulent_Intensit_reading_init
 
 
 
