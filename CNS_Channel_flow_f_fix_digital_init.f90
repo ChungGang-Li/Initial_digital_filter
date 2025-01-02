@@ -55,7 +55,7 @@ program cns_example
   param%T_average = 1000   
 
   param%monitor_freq = 10
-  param%sample_freq = 10
+  param%sample_freq = 1
   param%clcd_freq = 10
 
   param%rho0 = 1.1842d0
@@ -482,7 +482,7 @@ subroutine own_user_flow_field_init(field, param)
    !$omp end do
    
   
-  !$omp do
+  !$omp single
   do icube = 1, field%bcm%n_cube
 	  
      do i = -nxx, nxx
@@ -497,9 +497,7 @@ subroutine own_user_flow_field_init(field, param)
 		Bk(k, icube) = exp(-pii * k**2 / (2.0d0 * nzz**2))
      end do
 	 
-	 temp = 0d0
-	 
-	 temp = temp + sum(Bi(:, icube)**2) * sum(Bj(:, icube)**2) * sum(Bk(:, icube)**2)
+	 temp = sum(Bi(:, icube)**2) * sum(Bj(:, icube)**2) * sum(Bk(:, icube)**2)
 	 temp = max(sqrt(temp),1e-10)
 	 
 	 do i = -nxx, nxx
@@ -523,7 +521,7 @@ subroutine own_user_flow_field_init(field, param)
 	   end do
 	   
    end do
-   !$omp end do
+   !$omp end single
    
    
    Call Turbulent_Intensit_reading_init("Statistics_Ref.dat", nnrows)
